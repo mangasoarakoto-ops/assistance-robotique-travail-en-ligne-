@@ -19,7 +19,8 @@ const translations = {
   mg: {
     welcome: "Miarahaba",
     share_contact: "📱 Hizara laharana",
-    click_question: "👇 Tsindrio ity fanontaniana ity raha te hahalala ny valiny:",
+    see_answer: "👁️ Hijery ny valiny",
+    next_q: "⏩ Fanontaniana manaraka",
     subscribe_btn: "✍️ Hisoratra anarana",
     end_course: "🎉 Vita ny fanontaniana rehetra! Misaotra.",
     admin_del: "🗑️ Hamafa ity",
@@ -34,7 +35,8 @@ const translations = {
   fr: {
     welcome: "Bonjour",
     share_contact: "📱 Partager contact",
-    click_question: "👇 Cliquez sur la question pour voir la réponse :",
+    see_answer: "👁️ Voir la réponse",
+    next_q: "⏩ Question suivante",
     subscribe_btn: "✍️ S'inscrire",
     end_course: "🎉 Toutes les questions sont finies ! Merci.",
     admin_del: "🗑️ Supprimer ceci",
@@ -49,7 +51,8 @@ const translations = {
   en: {
     welcome: "Hello",
     share_contact: "📱 Share contact",
-    click_question: "👇 Click the question below to see the answer:",
+    see_answer: "👁️ See Answer",
+    next_q: "⏩ Next Question",
     subscribe_btn: "✍️ Register here",
     end_course: "🎉 All questions completed! Thanks.",
     admin_del: "🗑️ Delete this",
@@ -64,7 +67,7 @@ const translations = {
 };
 
 // --- SERVER ---
-app.get('/', (req, res) => { res.send('Auto-Flow Bot Active!'); });
+app.get('/', (req, res) => { res.send('Sequential Bot Active!'); });
 app.listen(PORT, () => { console.log(`Server running on port ${PORT}`); });
 
 // --- HELPER: TRADUCTION ---
@@ -83,7 +86,7 @@ async function saveUser(telegramId, data) {
   await setDoc(doc(db, "users", telegramId.toString()), data, { merge: true });
 }
 
-// Maka ny fanontaniana rehetra milahatra
+// Maka ny fanontaniana rehetra milahatra araka ny fotoana nampidirana azy
 async function getAllQuestions() {
   const q = query(collection(db, "menus"), orderBy("createdAt", "asc"));
   const snapshot = await getDocs(q);
@@ -97,28 +100,28 @@ async function deleteAllData() {
   await batch.commit();
 }
 
-// --- LOGIC: MANDEFA QUESTION (BOUTON) ---
-async function sendQuestionButton(ctx, userId, index, lang) {
+// --- LOGIC: MANDEFA QUESTION ---
+async function sendQuestion(ctx, userId, index, lang) {
   const questions = await getAllQuestions();
   
   // Raha efa vita ny fanontaniana rehetra
   if (index >= questions.length) {
     await ctx.reply(t('end_course', lang));
+    // Reset index raha tiana hiverina any am-boalohany izy amin'ny manaraka
+    // await saveUser(userId, { currentIndex: 0 }); 
     return;
   }
 
   const currentQ = questions[index];
   
-  // Tehirizina ny toerana misy azy
+  // Tehirizina hoe aiza izy izao
   await saveUser(userId, { currentIndex: index });
 
-  // Mandefa message misy Bouton ilay Question
-  // Ny bouton dia misy ny soratra hoe "Question..."
-  // Ny data dia misy ny ID sy ny Index
+  // Mandefa ny Question (Texte) + Bokotra "Hijery Valiny"
   await ctx.reply(
-    t('click_question', lang), 
+    `❓ ${currentQ.question}`, 
     Markup.inlineKeyboard([
-      [Markup.button.callback(`❓ ${currentQ.question}`, `answer_${currentQ.id}_${index}`)]
+      Markup.button.callback(t('see_answer', lang), `reveal_${currentQ.id}_${index}`)
     ])
   );
 }
@@ -130,10 +133,10 @@ bot.start(async (ctx) => {
   const lang = user?.lang || 'mg';
 
   if (user && user.phone) {
-    // Raha efa mpampiasa dia tohizana eo amin'ny nijanony
+    // Raha efa mpampiasa taloha, tohizana eo amin'ny index nijanony na 0
     const currentIndex = user.currentIndex || 0;
     await ctx.reply(`${t('welcome', lang)} ${user.nom}!`);
-    await sendQuestionButton(ctx, ctx.from.id, currentIndex, lang);
+    await sendQuestion(ctx, ctx.from.id, currentIndex, lang);
   } else {
     // Safidy langue aloha
     ctx.reply("Miarahaba! Safidio ny fiteny / Choose language:", 
@@ -157,12 +160,12 @@ bot.on('contact', async (ctx) => {
     phone: ctx.message.contact.phone_number,
     step: 'registered',
     lang: lang,
-    currentIndex: 0 
+    currentIndex: 0 // Manomboka amin'ny voalohany
   });
   
   ctx.reply(`✅ ${t('welcome', lang)}!`, Markup.removeKeyboard());
-  // Alefa avy hatrany ny BOUTON QUESTION 1
-  await sendQuestionButton(ctx, id, 0, lang);
+  // Alefa avy hatrany ny question voalohany
+  await sendQuestion(ctx, id, 0, lang);
 });
 
 // --- ADMIN COMMANDS ---
@@ -186,7 +189,7 @@ bot.command('cancel', async (ctx) => {
   ctx.reply("Annulé.");
 });
 
-// --- ADMIN INPUT HANDLER ---
+// --- MESSAGES HANDLER (ADMIN INPUT) ---
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
   const user = await getUser(id);
@@ -200,7 +203,7 @@ bot.on('message', async (ctx) => {
       await saveUser(id, { step: 'admin_ask_response', tempQuestion: text });
       ctx.reply(t('admin_r_prompt', lang));
     
-    // 2. Raisina ny Réponse
+    // 2. Raisina ny Réponse (Media/Texte)
     } else if (user.step === 'admin_ask_response') {
       let type = 'text', content = text;
       
@@ -218,22 +221,23 @@ bot.on('message', async (ctx) => {
       let link = null;
       if (text && text.includes('http')) link = text;
 
+      // Manampy createdAt mba hahafantarana ny filaharana
       await addDoc(collection(db, "menus"), {
         question: user.tempQuestion, 
         type: user.tempType, 
         content: user.tempContent, 
         link: link,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString() // Zava-dehibe amin'ny filaharana
       });
 
-      // Loop: Miverina manontany Question manaraka avy hatrany
+      // Miverina loop
       await saveUser(id, { step: 'admin_ask_question' });
       ctx.reply(t('saved_next', lang));
     }
   }
 });
 
-// --- ACTIONS (BUTTONS CLICKS) ---
+// --- ACTIONS (BUTTONS) ---
 bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
   const id = ctx.from.id;
@@ -249,58 +253,61 @@ bot.on('callback_query', async (ctx) => {
     if (!user || !user.phone) {
        ctx.reply(t('share_contact', newLang), Markup.keyboard([Markup.button.contactRequest(t('share_contact', newLang))]).resize().oneTime());
     } else {
+       // Raha efa misy dia alefa ny question farany nijanona
        const idx = user.currentIndex || 0;
-       await sendQuestionButton(ctx, id, idx, newLang);
+       await sendQuestion(ctx, id, idx, newLang);
     }
   }
 
-  // 2. REHEFA MIKITIKA QUESTION (answer_)
-  else if (data.startsWith('answer_')) {
+  // 2. Asehoy ny Valiny (REVEAL)
+  else if (data.startsWith('reveal_')) {
     const [_, itemId, idxStr] = data.split('_');
     const index = parseInt(idxStr);
     
     const docSnap = await getDoc(doc(db, "menus", itemId));
-    
-    // Valiny amin'ny button click
-    await ctx.answerCbQuery(); 
-
     if (docSnap.exists()) {
       const m = docSnap.data();
       
-      // Manomana bokotra fanampiny ho an'ny valiny (Lien d'inscription raha misy)
-      let responseButtons = [];
+      // Manomana bokotra
+      let buttons = [];
+      
+      // Bokotra Lien (raha misy)
       if (m.link) {
-        responseButtons.push([Markup.button.url(t('subscribe_btn', lang), m.link)]);
+        buttons.push([Markup.button.url(t('subscribe_btn', lang), m.link)]);
       }
-      // Raha admin dia afaka mamafa
+      
+      // Bokotra Manaraka (Next) -> index + 1
+      buttons.push([Markup.button.callback(t('next_q', lang), `next_${index + 1}`)]);
+      
+      // Admin Delete Button
       if (id === ADMIN_ID) {
-        responseButtons.push([Markup.button.callback(t('admin_del', lang), `del_${itemId}`)]);
+        buttons.push([Markup.button.callback(t('admin_del', lang), `del_${itemId}`)]);
       }
 
-      const keyboard = responseButtons.length > 0 ? Markup.inlineKeyboard(responseButtons) : null;
       const method = m.type === 'photo' ? 'replyWithPhoto' : m.type === 'video' ? 'replyWithVideo' : m.type === 'document' ? 'replyWithDocument' : m.type === 'voice' ? 'replyWithVoice' : 'reply';
       
-      // A. Asehoy ny valiny (Réponse)
-      await ctx[method](m.content, keyboard);
-
-      // B. AVY HATRANY: Asehoy ny Question Manaraka (Next Question Button)
-      // Tsy mila mikitika "Next" intsony ny olona fa tonga dia miseho
-      setTimeout(async () => {
-         await sendQuestionButton(ctx, id, index + 1, lang);
-      }, 1000); // Andrasana kely (1 seconde) mba tsy hiara-mipoaka be loatra
-      
+      // Alefa ny Réponse miaraka amin'ny bokotra "Manaraka"
+      await ctx[method](m.content, Markup.inlineKeyboard(buttons));
     } else {
       ctx.reply("Error: Tsy hita ny angona.");
     }
   }
 
-  // 3. Admin Delete
+  // 3. Question Manaraka (NEXT)
+  else if (data.startsWith('next_')) {
+    const nextIndex = parseInt(data.split('_')[1]);
+    await sendQuestion(ctx, id, nextIndex, lang);
+  }
+
+  // 4. Admin Delete
   else if (data.startsWith('del_')) {
     if (id !== ADMIN_ID) return;
     const mid = data.split('_')[1];
     await deleteDoc(doc(db, "menus", mid));
     ctx.reply(t('deleted', lang));
   }
+
+  ctx.answerCbQuery();
 });
 
 bot.launch();
